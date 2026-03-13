@@ -238,6 +238,36 @@ html, body {
   box-shadow: var(--glow-cyan);
 }
 
+/* ─── Discord Sidebar Link ────────────────────────────────── */
+.discord-sidebar-link {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-md) var(--space-lg);
+  margin-top: auto;
+  background: linear-gradient(135deg, rgba(88, 101, 242, 0.15), rgba(88, 101, 242, 0.05));
+  border: 1px solid rgba(88, 101, 242, 0.25);
+  border-radius: var(--radius-md);
+  color: #b8bfff;
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-smooth);
+  z-index: 10;
+  flex-shrink: 0;
+}
+
+.discord-sidebar-link:hover {
+  background: linear-gradient(135deg, rgba(88, 101, 242, 0.3), rgba(88, 101, 242, 0.12));
+  border-color: rgba(88, 101, 242, 0.5);
+  color: #dee1ff;
+  box-shadow: 0 0 20px rgba(88, 101, 242, 0.25);
+  transform: translateY(-1px);
+}
+
 /* ─── Sidebar ─────────────────────────────────────────────── */
 .sidebar {
   position: fixed;
@@ -752,6 +782,29 @@ html, body {
 @keyframes pulse {
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.5; transform: scale(0.8); }
+}
+
+/* ─── Alpha Badge ─────────────────────────────────────────── */
+.alpha-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  padding: 2px 7px;
+  border-radius: 4px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  animation: alpha-glow 3s ease-in-out infinite;
+}
+
+@keyframes alpha-glow {
+  0%, 100% { box-shadow: 0 0 4px rgba(245, 158, 11, 0.15); }
+  50% { box-shadow: 0 0 8px rgba(245, 158, 11, 0.3); }
 }
 
 /* ─── Responsive ──────────────────────────────────────────── */
