@@ -13,6 +13,8 @@ donor-extract/stratosfyre-globe/
 ├── README.md                      ← you are here
 ├── MIGRATION_PLAN.md              ← phased plan
 ├── DataBus.ts                     ← src/globe/DataBus.ts
+├── CameraController.ts            ← src/globe/CameraController.ts (Phase 4)
+├── CameraController.test.ts       ← Phase 4 unit tests
 ├── DeckGlobe.refactored.tsx       ← reference (not drop-in)
 ├── plugins/
 │   ├── types.ts                   ← GlobePlugin<T>, PluginContext, FlyToTarget, GlobeEvents
@@ -45,7 +47,7 @@ donor-extract/stratosfyre-globe/
 1. **Phase 1** — Copy `DataBus.ts` and `plugins/types.ts`. Replace `cameraResetToken` and `onMarketClick` with `dataBus.emit(...)`.
 2. **Phase 2** — Copy the `store/` directory; swap the singleton. Run `store/index.test.ts`. Optional: wire the `runParity` helper against the old viewStore for a few days before deletion.
 3. **Phase 3** — Copy `plugins/PluginRegistry.ts`, `plugins/PluginManager.ts`, `plugins/filterEngine.ts`. Copy `plugins/builtin/*` one at a time, starting with `MarketsPlugin`. After each plugin lands, delete the equivalent inline code from `DeckGlobe.tsx`. Final step: refactor `DeckGlobe.tsx` per `DeckGlobe.refactored.tsx`.
-4. **Phase 4** — Move the hard-coded fly-to from the old `handleClick` into each plugin's `getFlyToTarget`.
+4. **Phase 4** — Copy `CameraController.ts` + test. In `DeckGlobe.tsx`, replace the inline `dataBus.on('cameraFlyTo', ...)` block with a single `mountCameraController(...)` call. Move per-entity framing into each plugin's `getFlyToTarget`. Wire the region dropdown to `dataBus.emit('cameraPreset', { presetId })`.
 5. **Phase 5 (deferred)** — Add `PollingManager` + `CacheLayer` from WWV when a real live feed lands.
 
 ## What is NOT in this package (yet, by design)

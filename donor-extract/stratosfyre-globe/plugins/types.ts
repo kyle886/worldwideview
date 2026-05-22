@@ -60,6 +60,28 @@ export interface FlyToTarget {
   durationMs?: number;
   /** FlyToInterpolator speed factor. Default 1.6. */
   speed?: number;
+  /** Globe pitch (deck.gl GlobeView allows a limited range). */
+  pitch?: number;
+  /** Globe bearing in degrees. */
+  bearing?: number;
+  /**
+   * When true (default), the CameraController zeroes out `durationMs` if the
+   * user has `prefers-reduced-motion: reduce`. Set false to opt out (e.g.
+   * for a teleport that should be instant regardless).
+   */
+  respectReducedMotion?: boolean;
+}
+
+// ─── Camera preset ──────────────────────────────────────────────
+/**
+ * Named camera viewpoints registered with the CameraController and
+ * triggered via `dataBus.emit('cameraPreset', { presetId })`. Typical use:
+ * region filter changes (americas / europe / asiaPacific) fire a preset to
+ * frame that region.
+ */
+export interface CameraPreset extends FlyToTarget {
+  id: string;
+  label?: string;
 }
 
 // ─── Plugin context — passed to lifecycle + render hooks ────────
@@ -166,6 +188,8 @@ export interface GlobeEvents {
   cameraReset: Record<string, never>;
   /** Request the camera fly to a specific location. */
   cameraFlyTo: FlyToTarget;
+  /** Request the camera fly to a registered preset (e.g. region). */
+  cameraPreset: { presetId: string };
   /** A plugin's data set changed (after fetch, filter, or external update). */
   dataUpdated: { pluginId: string; count: number };
   /** A layer was toggled on/off. */

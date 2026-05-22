@@ -29,7 +29,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { DeckGL } from '@deck.gl/react';
 import {
   _GlobeView as GlobeView,
-  FlyToInterpolator,
   type Layer,
   type PickingInfo,
 } from '@deck.gl/core';
@@ -37,7 +36,8 @@ import {
 import { pluginRegistry } from './plugins/PluginRegistry';
 import { pluginManager } from './plugins/PluginManager';
 import { dataBus } from './DataBus';
-import { viewStore as defaultStore, type ViewState, type ViewStore } from './viewStore';
+import { mountCameraController } from './CameraController';
+import { viewStore as defaultStore, type ViewState, type ViewStore } from './store';
 
 // ─── Constants kept in the shell ────────────────────────────────
 export const GLOBE_CONTROLLER_CONFIG = {
@@ -115,22 +115,15 @@ export function DeckGlobe({
   // ── store subscription
   useEffect(() => store.subscribe((s) => setStoreState(s)), [store]);
 
-  // ── DataBus camera bridge: turn events into deck.gl viewState changes
+  // ── DataBus camera bridge — all fly-to / reset / preset logic lives in
+  // CameraController.ts. Reduced-motion, cursor flip, FlyToInterpolator
+  // construction are all handled there.
   useEffect(() => {
-    const unsubReset = dataBus.on('cameraReset', () => setViewState(initialViewState));
-    const unsubFly = dataBus.on('cameraFlyTo', ({ longitude, latitude, zoom, durationMs, speed }) => {
-      setViewState({
-        longitude,
-        latitude,
-        zoom: zoom ?? 6,
-        transitionDuration: durationMs ?? 1200,
-        transitionInterpolator: new FlyToInterpolator({ speed: speed ?? 1.6 }),
-      });
+    return mountCameraController({
+      setViewState: (patch) =>
+        setViewState(patch as unknown as Record<string, unknown>),
+      initialViewState,
     });
-    return () => {
-      unsubReset();
-      unsubFly();
-    };
   }, [initialViewState]);
 
   // ── plugin context — passed into buildLayers and onPick. The PluginManager

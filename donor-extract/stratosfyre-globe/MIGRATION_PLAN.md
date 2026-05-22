@@ -143,11 +143,47 @@ const handleClick = (info: PickingInfo) => {
 
 **Test**: Add a registry-mounting smoke test. Existing Playwright runs unchanged.
 
-### Phase 4 — Per-plugin selection behavior (½ day)
+### Phase 4 — Per-plugin selection behavior + CameraController (½ day)
 
-**Change**: The hard-coded fly-to in `handleClick` (`zoom: 6, duration: 1200, speed: 1.6`) moves into `MarketsPlugin.getFlyToTarget()`. New plugins can declare their own framing — e.g. a portfolio plugin might want `zoom: 4` with no transition; a saved-locations cluster might want `zoom: 10`.
+**Change**: Centralize all camera logic in `CameraController.ts`. Plugins declare *intent* via `getFlyToTarget(datum)`; the controller translates intent into deck.gl viewState patches, handles reduced-motion, runs the cursor-flip side effect, and dispatches named presets.
 
-Trivial, but unblocks every future "this entity wants different camera behavior" requirement.
+After this phase, `DeckGlobe.tsx` contains:
+- Zero `FlyToInterpolator` imports
+- Zero hard-coded transition durations / speeds
+- Zero `window.matchMedia('(prefers-reduced-motion)')` checks
+- Zero `document.body.style.cursor` manipulation
+
+All of that lives in `CameraController.ts`. The `DeckGlobe` shell's camera bridge collapses to a single `mountCameraController({ setViewState, initialViewState })` call.
+
+**Per-plugin fly-to declarations** (examples):
+
+```typescript
+// MarketsPlugin — emphatic settle on a single market
+getFlyToTarget(market: Market): FlyToTarget {
+  return { longitude: market.lng, latitude: market.lat, zoom: 6,
+           durationMs: 1200, speed: 1.6 };
+}
+
+// Hypothetical PortfolioPlugin — frame a portfolio at low zoom, instant
+getFlyToTarget(p: PortfolioEntry): FlyToTarget | null {
+  return { longitude: p.centroidLng, latitude: p.centroidLat,
+           zoom: 4, durationMs: 0 };
+}
+
+// Hypothetical SavedLocationsPlugin — close zoom for keyboard nav
+getFlyToTarget(loc: SavedLocation): FlyToTarget {
+  return { longitude: loc.lng, latitude: loc.lat, zoom: 10,
+           durationMs: 600 };
+}
+
+// HoverPreviewPlugin — never moves the camera on pick
+getFlyToTarget() { return null; }
+```
+
+**Named presets** (`CAMERA_PRESETS` in `CameraController.ts`): trigger via `dataBus.emit('cameraPreset', { presetId: 'europe' })`. Wire this to the region-filter dropdown so changing the filter also re-frames the camera. Built-in preset ids: `global`, `americas`, `europe`, `mena`, `asiaPacific`, `africa`, `oceania`, `arctic`. Override coordinates to match Stratosfyre's preferred framing.
+
+**Risk**: Low. The controller is pure-ish (one DataBus subscription + one setViewState call); the deck.gl side is unchanged.
+**Test**: Run `CameraController.test.ts` — covers reduced-motion gating, preset dispatch, unmount cleanup, and the pure `targetToViewState` translator.
 
 ### Phase 5 — Add `PollingManager` / `CacheLayer` (deferred, when live data lands)
 
