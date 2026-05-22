@@ -77,6 +77,10 @@ export interface PluginContext {
   filters: Record<string, Record<string, FilterValue>>;
   /** Globally-controlled style metric (e.g. 'mis' | 'vacancy' | 'rent' in Stratosfyre). */
   styleMetric?: string;
+  /** Heatmap mode (drives HexPlugin's elevation/visibility decision). */
+  heatmapMode?: string;
+  /** Basemap tile source (drives BasemapPlugin's tile URL choice). */
+  basemapMode?: string;
   /** Push an error up to the host shell (toast, log). */
   onError?: (err: Error) => void;
 }
@@ -95,6 +99,11 @@ export interface GlobePlugin<TDatum = unknown> {
   description?: string;
   category: PluginCategory;
   version: string;
+  /**
+   * When true, the host renders this plugin regardless of `activeLayers`.
+   * Use for the basemap + country outlines, which should always paint.
+   */
+  alwaysOn?: boolean;
 
   // Lifecycle
   initialize?(ctx: PluginContext): void | Promise<void>;

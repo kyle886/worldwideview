@@ -133,30 +133,31 @@ export function DeckGlobe({
     };
   }, [initialViewState]);
 
-  // ── plugin context — passed into buildLayers and onPick
+  // ── plugin context — passed into buildLayers and onPick. The PluginManager
+  // already holds a provider (set in `initGlobePlugins`); we recompute here
+  // for the layer-build memo so React deps stay precise.
   const ctx = useMemo(
     () => ({
       zoom: storeState.zoom,
       selectedId: storeState.selectedMarketId,
-      filters: {} as Record<string, Record<string, unknown>>, // wire when filtersSlice lands
+      filters: {} as Record<string, Record<string, unknown>>,
       styleMetric: storeState.colorMetric,
+      heatmapMode: storeState.heatmapMode,
+      basemapMode: storeState.basemapMode,
     }),
     [storeState],
   );
 
-  // Keep the manager's context provider fresh.
-  useEffect(() => {
-    pluginManager.setContextProvider(() => ctx as any);
-  }, [ctx]);
-
-  // ── build all layers in one pass over the registry
+  // ── build all layers in one pass over the registry. `alwaysOn` plugins
+  // (BasemapPlugin) bypass the activeLayers gate.
   const layers: Layer[] = useMemo(() => {
     return pluginRegistry.getAll().flatMap((plugin) => {
-      if (!storeState.activeLayers.has(plugin.id as never)) return [];
+      const gated = !plugin.alwaysOn && !storeState.activeLayers.has(plugin.id as never);
+      if (gated) return [];
       const data = pluginManager.getData(plugin.id);
       return plugin.buildLayers({ data, ctx: ctx as any });
     });
-  }, [storeState.activeLayers, storeState.zoom, storeState.selectedMarketId, storeState.colorMetric, ctx]);
+  }, [storeState.activeLayers, ctx]);
 
   // ── click dispatch: find owning plugin via layer id namespace
   const handleClick = (info: PickingInfo): void => {

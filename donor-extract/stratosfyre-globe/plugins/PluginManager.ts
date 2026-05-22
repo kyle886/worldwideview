@@ -17,7 +17,7 @@
  */
 
 import type { GlobePlugin, PluginContext } from './types';
-import { dataBus } from './DataBus';
+import { dataBus } from '../DataBus';
 
 interface ManagedPlugin {
   plugin: GlobePlugin<unknown>;

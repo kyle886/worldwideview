@@ -55,7 +55,7 @@ src/globe/store/
 Each slice exports a state shape + mutators. `createViewStore()` composes them via spread. Listeners stay global.
 
 **Risk**: Low. Pure refactor. Public API of `viewStore` is unchanged.
-**Test**: All store-consumer tests should pass unchanged.
+**Test**: Run `store/index.test.ts` (in this directory). For belt-and-suspenders confidence during the swap, wire the `runParity()` helper at the bottom of that file against the old `viewStore` for a few days, then delete.
 
 ### Phase 3 — Introduce `GlobePlugin<T>` interface (1–2 days, the big one)
 
@@ -131,9 +131,13 @@ const handleClick = (info: PickingInfo) => {
 
 **Migration order** (do one at a time, ship each):
 1. `MarketsPlugin` — most complex (pulse, color metric, selection). Get this right first; the others are mechanical.
-2. `BasemapPlugin` — owns the tile basemap + country outlines. Stays always-on but registered like any plugin.
-3. `ArcsPlugin`, `VoronoiPlugin`, `HexPlugin` — straightforward.
+2. `BasemapPlugin` — owns the tile basemap + country outlines. Uses `alwaysOn: true` so it bypasses the `activeLayers` gate.
+3. `ArcsPlugin`, `VoronoiPlugin`, `HexPlugin` — straightforward. `HexPlugin` keeps the existing "gate on `heatmapMode`, not `activeLayers`" semantics from DeckGlobe.tsx.
 4. `Photoreal3dPlugin` — the zoom gate moves into the plugin's `buildLayers` returning `[]` when zoom < threshold.
+
+**Registration** is done once at app startup via `initGlobePlugins({ store: viewStore })` (see `plugins/init.ts`). This wires the `PluginManager.setContextProvider` so every plugin sees a fresh `PluginContext` derived from the current `viewStore` snapshot.
+
+**Convention**: a plugin's id must be the prefix of every layer id it builds. `DeckGlobe`'s click handler dispatches to the owning plugin via `layerId === p.id || layerId.startsWith(p.id + '-')`. Examples: `MarketsPlugin` owns `markers` + `markers-pulse`; `BasemapPlugin` owns `basemap` + `basemap-countries`.
 
 **Risk**: Medium. Touches the largest file. Mitigation: keep `DeckGlobe.tsx`'s public API identical (same props), and migrate one layer at a time behind a feature flag if you want extra safety.
 
