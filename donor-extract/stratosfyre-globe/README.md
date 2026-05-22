@@ -16,6 +16,14 @@ Start with [`MIGRATION_PLAN.md`](./MIGRATION_PLAN.md).
 | `filterEngine.ts` | Generic `applyFilters<T>` | adapted from `src/core/filters/filterEngine.ts` |
 | `MarketsPlugin.example.ts` | Worked example: existing markers + pulse + selection as a plugin | new |
 | `DeckGlobe.refactored.tsx` | Sketch of `DeckGlobe.tsx` after Phase 3 | new |
+| `store/createSlice.ts` | `SliceCreator<TSlice, TFullState>` helper | adapted from WWV's slice pattern |
+| `store/index.ts` | Composed `viewStore` — preserves the existing public API | new |
+| `store/slices/selectionSlice.ts` | `selectedMarketId` + mutator | new |
+| `store/slices/layersSlice.ts` | `activeLayers` + `heatmapMode` + mutators | new |
+| `store/slices/styleSlice.ts` | `colorMetric` + `basemapMode` + mutators | new |
+| `store/slices/cameraSlice.ts` | `zoom` (note: `cameraResetToken` is gone, now a DataBus event) | new |
+| `store/slices/favoritesSlice.ts` | `savedMarketIds` + toggle | new |
+| `store/slices/filtersSlice.ts` | `regionFilter` (Phase 2 keeps the shape; Phase 3 generalizes) | new |
 
 ## Copy targets in Stratosfyre
 
@@ -35,6 +43,16 @@ src/globe/
       HexPlugin.ts                    ← Phase 3
       VoronoiPlugin.ts                ← Phase 3
       Photoreal3dPlugin.ts            ← Phase 3
+  store/
+    index.ts                          ← store/index.ts (replaces viewStore.ts)
+    createSlice.ts                    ← store/createSlice.ts
+    slices/
+      selectionSlice.ts               ← store/slices/selectionSlice.ts
+      layersSlice.ts                  ← store/slices/layersSlice.ts
+      styleSlice.ts                   ← store/slices/styleSlice.ts
+      cameraSlice.ts                  ← store/slices/cameraSlice.ts
+      favoritesSlice.ts               ← store/slices/favoritesSlice.ts
+      filtersSlice.ts                 ← store/slices/filtersSlice.ts
 ```
 
 ## What is NOT in this package (yet, by design)
