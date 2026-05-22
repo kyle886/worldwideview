@@ -185,13 +185,41 @@ getFlyToTarget() { return null; }
 **Risk**: Low. The controller is pure-ish (one DataBus subscription + one setViewState call); the deck.gl side is unchanged.
 **Test**: Run `CameraController.test.ts` — covers reduced-motion gating, preset dispatch, unmount cleanup, and the pure `targetToViewState` translator.
 
-### Phase 5 — Add `PollingManager` / `CacheLayer` (deferred, when live data lands)
+### Phase 5 — Wire `PollingManager` + `CacheLayer` (live-data day)
 
-When the first live feed arrives (vacancy poll, transit, live MIS), drop in:
-- `PollingManager.ts` from WWV (minor edits: strip Zustand coupling).
-- `CacheLayer.ts` from WWV (strip `GeoEntity` typing, make generic over `TDatum`).
+**Change**: Activate the polling + cache stack so plugins that declare a `fetchData()` + `getPollingInterval()` get scheduled automatically, and every plugin (prop-driven or fetch-driven) gets cache-first enable behavior.
 
-`PluginManager` already has the wire-up points; they just become active.
+This phase is the moment a Stratosfyre data source goes live — e.g. office-vacancy polling, transit overlay, real-time MIS updates. Before that, all data is still passed in via `pluginManager.setData(...)` from the dashboard.
+
+**Drop-in files:**
+- `plugins/PollingManager.ts` — exponential backoff, pause/resume, live `setInterval()` tuning, no concurrent ticks per plugin.
+- `plugins/CacheLayer.ts` — L1 memory + L2 IndexedDB, TTL per entry (default 30s), graceful degradation if IDB is unavailable.
+- `plugins/PluginManager.ts` (updated) — the previously-stubbed hooks are now active:
+  - `init()` opens the IDB connection.
+  - `registerPlugin()` registers a polling task iff the plugin has both `fetchData` and `getPollingInterval() > 0`.
+  - `enable()` serves L1 immediately, falls back to L2 in the background, then starts polling.
+  - `disable()` stops polling but keeps the cache warm.
+  - New: `setPollingInterval(id, ms)` and `setCacheTtl(ms)` for Config-panel knobs.
+
+**Per-plugin opt-in** — adding live polling to MarketsPlugin (illustrative):
+
+```typescript
+class MarketsPlugin implements GlobePlugin<Market> {
+  // ...existing fields...
+  getPollingInterval() { return 60_000; }  // 1 minute
+  async fetchData(_ctx: PluginContext): Promise<Market[]> {
+    const res = await fetch('/api/markets');
+    if (!res.ok) throw new Error(`markets api ${res.status}`);
+    return res.json();
+  }
+}
+```
+
+The plugin keeps working in prop-driven mode (host calls `setData`) — `fetchData` only kicks in for plugins that need it. Mix and match per plugin.
+
+**Risk**: Low for caching (additive); medium for polling, because the moment a real endpoint exists, you're now hitting it on a schedule. Watch for: cumulative request rate across plugins, IDB quota for chatty plugins (override the default 30s TTL), backoff behavior when a backend hiccups.
+
+**Test**: Run `PollingManager.test.ts` (fake timers cover the immediate tick, backoff cap, error-count reset, pause/resume, live `setInterval`, and the no-concurrent-ticks guarantee) and `CacheLayer.test.ts` (L1 TTL, eviction, IDB-absent fallback).
 
 ## Files in this directory
 

@@ -21,6 +21,10 @@ donor-extract/stratosfyre-globe/
 │   ├── PluginRegistry.ts
 │   ├── PluginManager.ts
 │   ├── filterEngine.ts
+│   ├── PollingManager.ts          ← Phase 5: per-plugin polling + backoff
+│   ├── CacheLayer.ts              ← Phase 5: L1 memory + L2 IndexedDB
+│   ├── PollingManager.test.ts
+│   ├── CacheLayer.test.ts
 │   ├── init.ts                    ← registration bootstrap
 │   └── builtin/
 │       ├── MarketsPlugin.ts       ← markers + pulse + selection (the complex one)
@@ -48,12 +52,10 @@ donor-extract/stratosfyre-globe/
 2. **Phase 2** — Copy the `store/` directory; swap the singleton. Run `store/index.test.ts`. Optional: wire the `runParity` helper against the old viewStore for a few days before deletion.
 3. **Phase 3** — Copy `plugins/PluginRegistry.ts`, `plugins/PluginManager.ts`, `plugins/filterEngine.ts`. Copy `plugins/builtin/*` one at a time, starting with `MarketsPlugin`. After each plugin lands, delete the equivalent inline code from `DeckGlobe.tsx`. Final step: refactor `DeckGlobe.tsx` per `DeckGlobe.refactored.tsx`.
 4. **Phase 4** — Copy `CameraController.ts` + test. In `DeckGlobe.tsx`, replace the inline `dataBus.on('cameraFlyTo', ...)` block with a single `mountCameraController(...)` call. Move per-entity framing into each plugin's `getFlyToTarget`. Wire the region dropdown to `dataBus.emit('cameraPreset', { presetId })`.
-5. **Phase 5 (deferred)** — Add `PollingManager` + `CacheLayer` from WWV when a real live feed lands.
+5. **Phase 5** — Copy `plugins/{PollingManager,CacheLayer}.ts` + tests. The updated `PluginManager.ts` (already in this directory) wires them. Per-plugin opt-in: add `fetchData()` + `getPollingInterval()` to any plugin that wants live updates; prop-driven plugins keep working unchanged.
 
-## What is NOT in this package (yet, by design)
+## What is NOT in this package (by design)
 
-- **`PollingManager`** — drop in only when a real live feed lands (Phase 5). WWV's version at `src/core/data/PollingManager.ts` works as-is once you strip its Zustand subscription (~10 lines).
-- **`CacheLayer`** — same; lift from `src/core/data/CacheLayer.ts` when persisted offline data is on the table. Replace `GeoEntity` with `<T>`.
 - **Server-side polling / API routes** — Stratosfyre has its own data layer; WWV's `src/lib/<plugin>/` and `src/app/api/<plugin>/` patterns are Next.js + Supabase specific.
 - **Cesium primitive batching** — irrelevant for deck.gl, which already does GPU batching via `ScatterplotLayer` / `IconLayer`.
 

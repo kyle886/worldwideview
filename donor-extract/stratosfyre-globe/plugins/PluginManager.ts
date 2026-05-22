@@ -1,51 +1,76 @@
 /**
- * PluginManager — lifecycle + data routing.
+ * PluginManager — lifecycle, polling, caching, and data routing.
  *
- * Adapted from WWV's src/core/plugins/PluginManager.ts. Two differences:
- *  1. Polling and caching are stubbed (not wired). Drop in PollingManager +
- *     CacheLayer from WWV in Phase 5 when a live feed arrives — the hooks
- *     (`registerPolling`, `loadFromCache`) are already in place as no-ops.
- *  2. No Zustand coupling. The host (DeckGlobe) reads plugin data via
- *     `getData(pluginId)` and re-renders normally; loading state can be
- *     surfaced via the DataBus instead of through a store mutator.
+ * Adapted from WWV's src/core/plugins/PluginManager.ts. Differences:
+ *  1. No Zustand coupling. The host (DeckGlobe) reads plugin data via
+ *     `getData(pluginId)` and re-renders normally; loading state is
+ *     surfaced through the DataBus rather than store mutators.
+ *  2. Cache and polling are pluggable. By default the module singletons
+ *     are used; pass a custom instance via the constructor for tests or
+ *     for multiple isolated globes on one page.
  *
- * Usage:
+ * Bootstrap (typical):
  *   await pluginManager.init();
  *   for (const p of pluginRegistry.getAll()) await pluginManager.registerPlugin(p);
- *   pluginManager.setData('markets', marketsArray);   // for prop-driven plugins
- *   pluginManager.enable('markets');                  // for fetch-driven plugins
+ *   pluginManager.enable('markets');
+ *
+ * Per-plugin data sourcing:
+ *  - `plugin.fetchData()` + `plugin.getPollingInterval()` defined → auto-polled
+ *  - Otherwise → host pushes data via `pluginManager.setData(id, array)`
+ *    (the prop-driven path Stratosfyre uses today)
  */
 
 import type { GlobePlugin, PluginContext } from './types';
 import { dataBus } from '../DataBus';
+import { cacheLayer as defaultCache, type CacheLayer } from './CacheLayer';
+import { pollingManager as defaultPolling, type PollingManager } from './PollingManager';
 
 interface ManagedPlugin {
   plugin: GlobePlugin<unknown>;
   enabled: boolean;
   data: unknown[];
+  /** True if a polling task is registered (fetchData + interval > 0 at register time). */
+  hasPollingTask: boolean;
+}
+
+export interface PluginManagerOptions {
+  cache?: CacheLayer;
+  polling?: PollingManager;
+  /** TTL applied to every cache write done by this manager. Default 30s. */
+  cacheTtlMs?: number;
 }
 
 class PluginManager {
   private plugins: Map<string, ManagedPlugin> = new Map();
   private initialized = false;
+  private cache: CacheLayer;
+  private polling: PollingManager;
+  private cacheTtl: number;
   private ctxProvider: () => PluginContext = () => ({
     zoom: 0,
     selectedId: null,
     filters: {},
   });
 
-  /**
-   * Provide a function that returns the current cross-cutting context whenever
-   * the manager calls into a plugin. Wire this in DeckGlobe so plugins can read
-   * `state.selectedMarketId`, `state.colorMetric`, etc.
-   */
+  constructor(opts: PluginManagerOptions = {}) {
+    this.cache = opts.cache ?? defaultCache;
+    this.polling = opts.polling ?? defaultPolling;
+    this.cacheTtl = opts.cacheTtlMs ?? 30_000;
+  }
+
+  /** Provide the current cross-cutting context for plugin lifecycle / poll calls. */
   setContextProvider(provider: () => PluginContext): void {
     this.ctxProvider = provider;
   }
 
+  /** Override the cache TTL for subsequent writes (Config panel knob, etc.). */
+  setCacheTtl(ttlMs: number): void {
+    this.cacheTtl = ttlMs;
+  }
+
   async init(): Promise<void> {
     if (this.initialized) return;
-    // Future: await cacheLayer.init();
+    await this.cache.init();
     this.initialized = true;
   }
 
@@ -54,36 +79,69 @@ class PluginManager {
       console.warn(`[PluginManager] Plugin "${plugin.id}" already registered`);
       return;
     }
-    this.plugins.set(plugin.id, { plugin, enabled: false, data: [] });
+    const managed: ManagedPlugin = {
+      plugin,
+      enabled: false,
+      data: [],
+      hasPollingTask: false,
+    };
+    this.plugins.set(plugin.id, managed);
+
     try {
       await plugin.initialize?.(this.ctxProvider());
     } catch (err) {
       console.error(`[PluginManager] init failed for ${plugin.id}:`, err);
     }
-    // Future: pollingManager.register(plugin.id, plugin.getPollingInterval?.() ?? 0, ...)
+
+    // Register polling if the plugin can fetch and declares an interval.
+    const interval = plugin.getPollingInterval?.() ?? 0;
+    if (plugin.fetchData && interval > 0) {
+      this.polling.register(plugin.id, interval, async () => {
+        // Guard: skip if the plugin was disabled between schedule and tick.
+        if (!managed.enabled) return;
+        try {
+          const fresh = await plugin.fetchData!(this.ctxProvider());
+          this.handleFreshData(plugin.id, fresh);
+        } catch (err) {
+          // Re-throw so PollingManager counts the error toward backoff.
+          plugin.initialize && console.warn(`[PluginManager] fetch failed for ${plugin.id}:`, err);
+          throw err;
+        }
+      });
+      managed.hasPollingTask = true;
+    }
   }
 
-  /**
-   * Push data into a plugin from outside (the common case while Stratosfyre
-   * still receives markets/arcs/voronoi as props from the dashboard).
-   * Emits `dataUpdated` so any UI counter can react.
-   */
+  /** Push data into a plugin from outside (prop-driven path). */
   setData<T>(pluginId: string, data: T[]): void {
-    const managed = this.plugins.get(pluginId);
-    if (!managed) return;
-    managed.data = data as unknown[];
-    dataBus.emit('dataUpdated', { pluginId, count: data.length });
+    this.handleFreshData(pluginId, data);
   }
 
   getData<T = unknown>(pluginId: string): T[] {
     return (this.plugins.get(pluginId)?.data ?? []) as T[];
   }
 
-  enable(pluginId: string): void {
+  async enable(pluginId: string): Promise<void> {
     const managed = this.plugins.get(pluginId);
     if (!managed || managed.enabled) return;
     managed.enabled = true;
-    // Future: cacheLayer.get(id) -> seed managed.data; pollingManager.start(id)
+
+    // L1 first — synchronous, snappy UI.
+    const l1 = this.cache.get(pluginId);
+    if (l1 && l1.length > 0) {
+      managed.data = l1;
+      dataBus.emit('dataUpdated', { pluginId, count: l1.length });
+    } else {
+      // L2 — fire-and-forget. Re-check `managed.enabled` when it resolves
+      // in case the user toggled off in the interim.
+      this.cache.getFromPersistent(pluginId).then((l2) => {
+        if (!l2 || !managed.enabled || managed.data.length > 0) return;
+        managed.data = l2;
+        dataBus.emit('dataUpdated', { pluginId, count: l2.length });
+      });
+    }
+
+    if (managed.hasPollingTask) this.polling.start(pluginId);
     dataBus.emit('layerToggled', { pluginId, enabled: true });
   }
 
@@ -91,15 +149,15 @@ class PluginManager {
     const managed = this.plugins.get(pluginId);
     if (!managed || !managed.enabled) return;
     managed.enabled = false;
-    // Future: pollingManager.stop(id)
+    if (managed.hasPollingTask) this.polling.stop(pluginId);
     dataBus.emit('layerToggled', { pluginId, enabled: false });
   }
 
-  toggle(pluginId: string): void {
+  async toggle(pluginId: string): Promise<void> {
     const managed = this.plugins.get(pluginId);
     if (!managed) return;
     if (managed.enabled) this.disable(pluginId);
-    else this.enable(pluginId);
+    else await this.enable(pluginId);
   }
 
   isEnabled(pluginId: string): boolean {
@@ -110,7 +168,16 @@ class PluginManager {
     return Array.from(this.plugins.values());
   }
 
+  /**
+   * Live-tune the polling interval for a plugin. Pair with a UI control
+   * (Config panel "Refresh every: __ s").
+   */
+  setPollingInterval(pluginId: string, intervalMs: number): void {
+    this.polling.setInterval(pluginId, intervalMs);
+  }
+
   destroy(): void {
+    this.polling.stopAll();
     this.plugins.forEach((m) => {
       try {
         m.plugin.destroy?.();
@@ -121,6 +188,20 @@ class PluginManager {
     this.plugins.clear();
     this.initialized = false;
   }
+
+  /** Central handler — write-through cache, store, emit. */
+  private handleFreshData<T>(pluginId: string, data: T[]): void {
+    const managed = this.plugins.get(pluginId);
+    if (!managed) return;
+    managed.data = data as unknown[];
+    this.cache.set(pluginId, data, this.cacheTtl);
+    dataBus.emit('dataUpdated', { pluginId, count: data.length });
+  }
+}
+
+export function createPluginManager(opts?: PluginManagerOptions): PluginManager {
+  return new PluginManager(opts);
 }
 
 export const pluginManager = new PluginManager();
+export type { PluginManager };
