@@ -2,7 +2,7 @@
 
 Donor package: patterns and modules lifted from WorldWideView's plugin architecture, adapted for Stratosfyre's deck.gl-based `DeckGlobe`. All deliverables stay on deck.gl.
 
-Start with [`MIGRATION_PLAN.md`](./MIGRATION_PLAN.md).
+Start with [`MIGRATION_PLAN.md`](./MIGRATION_PLAN.md) for the *why*. If you're an agent executing the port, use [`RUNBOOK.md`](./RUNBOOK.md) for the strict step-by-step.
 
 ## Directory layout
 
