@@ -31,7 +31,7 @@ export async function GET() {
         properties: {
             mmsi: v.mmsi,
             vesselName: v.name,
-            vesselType: v.type, // TODO: Enhance with real type categorization if needed
+            vesselType: v.type, // from ShipStaticData.Type via aisShipTypeToCategory; 'other' until seen
             speed_knots: v.speed,
             heading: v.heading,
         },
