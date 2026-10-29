@@ -1,11 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { aisShipTypeToCategory } from "./ais-ship-type";
-import {
-    getCachedVessels,
-    ingestAisMessage,
-    resetAisMaxCacheSizeForTests,
-    setAisMaxCacheSizeForTests,
-} from "./ais-stream";
+import { getCachedVessels, ingestAisMessage } from "./ais-stream";
 
 const pos = (mmsi: number, lat = 1, lon = 2) => ({
     MessageType: "PositionReport",
@@ -17,6 +12,15 @@ const stat = (mmsi: number, Type: unknown) => ({
     MetaData: { ShipName: "TEST SHIP" },
     Message: { ShipStaticData: { UserID: mmsi, Type } },
 });
+
+function assertCacheKeysAligned(): void {
+    const s = (globalThis as { __aisState?: { vesselCache: Map<number, unknown>; typeCache: Map<number, unknown> } })
+        .__aisState;
+    expect(s).toBeDefined();
+    const vesselKeys = [...s!.vesselCache.keys()].sort((a, b) => a - b);
+    const typeKeys = [...s!.typeCache.keys()].sort((a, b) => a - b);
+    expect(vesselKeys).toEqual(typeKeys);
+}
 
 describe("aisShipTypeToCategory", () => {
     it.each([
@@ -49,7 +53,6 @@ describe("aisShipTypeToCategory", () => {
 describe("ingestAisMessage", () => {
     beforeEach(() => {
         delete (globalThis as { __aisState?: unknown }).__aisState;
-        resetAisMaxCacheSizeForTests();
     });
 
     it("defaults to other until static data arrives", () => {
@@ -97,25 +100,64 @@ describe("ingestAisMessage", () => {
         expect(getCachedVessels()).toHaveLength(0);
     });
 
-    it("keeps vessel type aligned with typeCache when cache cap evicts other MMSIs", () => {
-        setAisMaxCacheSizeForTests(2);
-        ingestAisMessage(stat(1, 80));
-        ingestAisMessage(pos(1));
-        ingestAisMessage(stat(2, 70));
-        ingestAisMessage(pos(2));
-        ingestAisMessage(pos(3));
-        expect(getCachedVessels().find((v) => v.mmsi === 2)).toMatchObject({ type: "cargo" });
-        ingestAisMessage(pos(2, 5, 6));
-        expect(getCachedVessels().find((v) => v.mmsi === 2)).toMatchObject({
-            type: "cargo",
-            lat: 5,
-            lon: 6,
+    it("rejects non-finite lat/lon on PositionReport", () => {
+        ingestAisMessage({
+            MessageType: "PositionReport",
+            MetaData: { ShipName: "X" },
+            Message: { PositionReport: { UserID: 9, Latitude: NaN, Longitude: 0, Sog: 0, Cog: 0 } },
         });
+        ingestAisMessage({
+            MessageType: "PositionReport",
+            MetaData: { ShipName: "X" },
+            Message: { PositionReport: { UserID: 10, Latitude: 0, Longitude: Infinity, Sog: 0, Cog: 0 } },
+        });
+        expect(getCachedVessels()).toHaveLength(0);
+    });
+
+    it.each([
+        ["position UserID 0", pos(0)],
+        ["position negative MMSI", pos(-1)],
+        ["position fractional MMSI", pos(1.5)],
+        ["static UserID 0", stat(0, 70)],
+        ["static negative MMSI", stat(-2, 70)],
+    ])("rejects invalid MMSI: %s", (_label, msg) => {
+        ingestAisMessage(msg);
+        expect(getCachedVessels()).toHaveLength(0);
+        assertCacheKeysAligned();
+    });
+
+    it("regression: joint cap keeps vessel/type keys aligned through evictions", () => {
+        const opt = { maxCacheSize: 2 };
+        const types = [80, 70, 60, 70, 80] as const; // tanker, cargo, passenger, cargo, tanker
+        const labels = ["tanker", "cargo", "passenger", "cargo", "tanker"] as const;
+
+        for (let i = 0; i < 5; i++) {
+            const mmsi = i + 1;
+            ingestAisMessage(stat(mmsi, types[i]), opt);
+            ingestAisMessage(pos(mmsi, mmsi, mmsi), opt);
+            assertCacheKeysAligned();
+            if (mmsi >= 3) {
+                expect(getCachedVessels().find((v) => v.mmsi === mmsi)?.type).toBe(labels[i]);
+            }
+        }
+
+        expect(getCachedVessels().map((v) => v.mmsi).sort()).toEqual([4, 5]);
+        ingestAisMessage(pos(4, 40, 41), opt);
+        ingestAisMessage(pos(5, 50, 51), opt);
+        assertCacheKeysAligned();
+        expect(getCachedVessels().find((v) => v.mmsi === 4)).toMatchObject({ type: "cargo", lat: 40, lon: 41 });
+        expect(getCachedVessels().find((v) => v.mmsi === 5)).toMatchObject({ type: "tanker", lat: 50, lon: 51 });
     });
 
     it("survives a pre-existing state object without typeCache (hot reload)", () => {
         (globalThis as { __aisState?: unknown }).__aisState = {
-            vesselCache: new Map(), ws: null, reconnectTimeout: null, isConnecting: false, connectionStartTime: 0,
+            vesselCache: new Map(),
+            typeCache: new Map(),
+            pendingTypeCache: new Map(),
+            ws: null,
+            reconnectTimeout: null,
+            isConnecting: false,
+            connectionStartTime: 0,
         };
         ingestAisMessage(stat(5, 30));
         ingestAisMessage(pos(5));
