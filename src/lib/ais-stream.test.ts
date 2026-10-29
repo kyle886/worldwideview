@@ -13,12 +13,22 @@ const stat = (mmsi: number, Type: unknown) => ({
     Message: { ShipStaticData: { UserID: mmsi, Type } },
 });
 
-function assertCacheKeysAligned(): void {
-    const s = (globalThis as { __aisState?: { vesselCache: Map<number, unknown>; typeCache: Map<number, unknown> } })
-        .__aisState;
+type AisTestState = {
+    vesselCache: Map<number, unknown>;
+    typeCache: Map<number, unknown>;
+    pendingTypeCache: Map<number, unknown>;
+};
+
+function getAisTestState(): AisTestState {
+    const s = (globalThis as { __aisState?: AisTestState }).__aisState;
     expect(s).toBeDefined();
-    const vesselKeys = [...s!.vesselCache.keys()].sort((a, b) => a - b);
-    const typeKeys = [...s!.typeCache.keys()].sort((a, b) => a - b);
+    return s!;
+}
+
+function assertCacheKeysAligned(): void {
+    const s = getAisTestState();
+    const vesselKeys = [...s.vesselCache.keys()].sort((a, b) => a - b);
+    const typeKeys = [...s.typeCache.keys()].sort((a, b) => a - b);
     expect(vesselKeys).toEqual(typeKeys);
 }
 
@@ -118,12 +128,69 @@ describe("ingestAisMessage", () => {
         ["position UserID 0", pos(0)],
         ["position negative MMSI", pos(-1)],
         ["position fractional MMSI", pos(1.5)],
+        ["position string MMSI", {
+            MessageType: "PositionReport",
+            MetaData: { ShipName: "X" },
+            Message: { PositionReport: { UserID: "70" as unknown as number, Latitude: 0, Longitude: 0, Sog: 0, Cog: 0 } },
+        }],
+        ["position Infinity MMSI", {
+            MessageType: "PositionReport",
+            MetaData: { ShipName: "X" },
+            Message: { PositionReport: { UserID: Infinity, Latitude: 0, Longitude: 0, Sog: 0, Cog: 0 } },
+        }],
+        ["position huge integer MMSI", {
+            MessageType: "PositionReport",
+            MetaData: { ShipName: "X" },
+            Message: { PositionReport: { UserID: 1_000_000_000, Latitude: 0, Longitude: 0, Sog: 0, Cog: 0 } },
+        }],
         ["static UserID 0", stat(0, 70)],
         ["static negative MMSI", stat(-2, 70)],
+        ["static string MMSI", {
+            MessageType: "ShipStaticData",
+            MetaData: {},
+            Message: { ShipStaticData: { UserID: "70" as unknown as number, Type: 70 } },
+        }],
+        ["static Infinity MMSI", {
+            MessageType: "ShipStaticData",
+            MetaData: {},
+            Message: { ShipStaticData: { UserID: Infinity, Type: 70 } },
+        }],
+        ["static huge integer MMSI", {
+            MessageType: "ShipStaticData",
+            MetaData: {},
+            Message: { ShipStaticData: { UserID: 9_007_199_254_740_993, Type: 70 } },
+        }],
     ])("rejects invalid MMSI: %s", (_label, msg) => {
         ingestAisMessage(msg);
         expect(getCachedVessels()).toHaveLength(0);
         assertCacheKeysAligned();
+    });
+
+    it("stores static-only types in pendingTypeCache, not typeCache", () => {
+        ingestAisMessage(stat(99, 80));
+        const s = getAisTestState();
+        expect(s.typeCache.has(99)).toBe(false);
+        expect(s.pendingTypeCache.get(99)).toBe("tanker");
+        assertCacheKeysAligned();
+        ingestAisMessage(pos(99));
+        expect(getCachedVessels()[0]).toMatchObject({ mmsi: 99, type: "tanker" });
+        expect(s.pendingTypeCache.has(99)).toBe(false);
+        expect(s.typeCache.get(99)).toBe("tanker");
+    });
+
+    it("caps pendingTypeCache and evicts oldest static-only entries", () => {
+        const opt = { maxCacheSize: 2 };
+        for (let m = 1; m <= 4; m++) {
+            ingestAisMessage(stat(m, 70), opt);
+        }
+        const s = getAisTestState();
+        expect(s.pendingTypeCache.size).toBeLessThanOrEqual(2);
+        expect([...s.pendingTypeCache.keys()]).toEqual([3, 4]);
+        expect(s.typeCache.size).toBe(0);
+        ingestAisMessage(pos(4), opt);
+        expect(getCachedVessels()[0]).toMatchObject({ mmsi: 4, type: "cargo" });
+        ingestAisMessage(pos(3), opt);
+        expect(getCachedVessels().find((v) => v.mmsi === 3)).toMatchObject({ type: "cargo" });
     });
 
     it("regression: joint cap keeps vessel/type keys aligned through evictions", () => {

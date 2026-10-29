@@ -31,8 +31,14 @@ const MAX_AGE_MS = 60 * 60 * 1000;   // 1 hour
 const TIMEOUT_MS = 60_000;           // 60s generous handshake window
 const RECONNECT_MS = 5_000;
 
+/** ITU-R M.1371 MMSI: nine-digit decimal (1 … 999_999_999). */
 function isValidMmsi(id: unknown): id is number {
-    return typeof id === 'number' && Number.isInteger(id) && id > 0;
+    return (
+        typeof id === 'number' &&
+        Number.isInteger(id) &&
+        id > 0 &&
+        id <= 999_999_999
+    );
 }
 
 function getState(): AisState {
@@ -61,20 +67,39 @@ export function getCachedVessels(): any[] {
 function evictMmsi(s: AisState, mmsi: number): void {
     s.vesselCache.delete(mmsi);
     s.typeCache.delete(mmsi);
+    s.pendingTypeCache.delete(mmsi);
 }
 
-/** Keep vessel and type entries aligned — never drop one map entry without the other. */
+function capPendingCache(s: AisState, limit: number): void {
+    while (s.pendingTypeCache.size > limit) {
+        const k = s.pendingTypeCache.keys().next().value;
+        if (k === undefined) break;
+        s.pendingTypeCache.delete(k);
+    }
+}
+
+/** Joint eviction: vessel and type caches stay aligned (same MMSI set). */
 function capCaches(s: AisState, limit: number): void {
-    while (s.vesselCache.size > limit) {
-        const k = s.vesselCache.keys().next().value;
-        if (k === undefined) break;
-        s.vesselCache.delete(k);
+    for (;;) {
+        if (s.vesselCache.size > limit) {
+            const k = s.vesselCache.keys().next().value;
+            if (k === undefined) break;
+            evictMmsi(s, k);
+            continue;
+        }
+        if (s.typeCache.size > limit) {
+            const k = s.typeCache.keys().next().value;
+            if (k === undefined) break;
+            evictMmsi(s, k);
+            continue;
+        }
+        break;
     }
-    while (s.typeCache.size > limit) {
-        const k = s.typeCache.keys().next().value;
-        if (k === undefined) break;
-        s.typeCache.delete(k);
-    }
+}
+
+function capAllCaches(s: AisState, limit: number): void {
+    capPendingCache(s, limit);
+    capCaches(s, limit);
 }
 
 /** Apply one parsed aisstream.io message to the vessel cache. */
@@ -93,7 +118,7 @@ export function ingestAisMessage(msg: any, options?: IngestAisMessageOptions): v
         } else {
             s.pendingTypeCache.set(mmsi, type);
         }
-        capCaches(s, cacheLimit);
+        capAllCaches(s, cacheLimit);
         return;
     }
 
@@ -131,7 +156,7 @@ export function ingestAisMessage(msg: any, options?: IngestAisMessageOptions): v
         timestamp: meta.time_utc,
     });
     s.typeCache.set(mmsi, type);
-    capCaches(s, cacheLimit);
+    capAllCaches(s, cacheLimit);
 }
 
 export function startAisStream(): void {
