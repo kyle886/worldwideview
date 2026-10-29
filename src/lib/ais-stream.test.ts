@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { aisShipTypeToCategory } from "./ais-ship-type";
-import { getCachedVessels, ingestAisMessage } from "./ais-stream";
+import {
+    getCachedVessels,
+    ingestAisMessage,
+    resetAisMaxCacheSizeForTests,
+    setAisMaxCacheSizeForTests,
+} from "./ais-stream";
 
 const pos = (mmsi: number, lat = 1, lon = 2) => ({
     MessageType: "PositionReport",
@@ -44,6 +49,7 @@ describe("aisShipTypeToCategory", () => {
 describe("ingestAisMessage", () => {
     beforeEach(() => {
         delete (globalThis as { __aisState?: unknown }).__aisState;
+        resetAisMaxCacheSizeForTests();
     });
 
     it("defaults to other until static data arrives", () => {
@@ -75,6 +81,36 @@ describe("ingestAisMessage", () => {
         ingestAisMessage({ MessageType: "ShipStaticData", Message: {} });
         ingestAisMessage({ MessageType: "BaseStationReport", Message: {} });
         expect(getCachedVessels()).toHaveLength(0);
+    });
+
+    it("ignores PositionReport without PositionReport payload or UserID", () => {
+        expect(() =>
+            ingestAisMessage({ MessageType: "PositionReport", Message: {}, MetaData: {} }),
+        ).not.toThrow();
+        expect(() =>
+            ingestAisMessage({
+                MessageType: "PositionReport",
+                Message: { PositionReport: { Latitude: 0, Longitude: 0 } },
+                MetaData: {},
+            }),
+        ).not.toThrow();
+        expect(getCachedVessels()).toHaveLength(0);
+    });
+
+    it("keeps vessel type aligned with typeCache when cache cap evicts other MMSIs", () => {
+        setAisMaxCacheSizeForTests(2);
+        ingestAisMessage(stat(1, 80));
+        ingestAisMessage(pos(1));
+        ingestAisMessage(stat(2, 70));
+        ingestAisMessage(pos(2));
+        ingestAisMessage(pos(3));
+        expect(getCachedVessels().find((v) => v.mmsi === 2)).toMatchObject({ type: "cargo" });
+        ingestAisMessage(pos(2, 5, 6));
+        expect(getCachedVessels().find((v) => v.mmsi === 2)).toMatchObject({
+            type: "cargo",
+            lat: 5,
+            lon: 6,
+        });
     });
 
     it("survives a pre-existing state object without typeCache (hot reload)", () => {

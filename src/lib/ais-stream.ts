@@ -17,7 +17,18 @@ interface AisState {
     connectionStartTime: number;
 }
 
-const MAX_CACHE = 50_000;
+const DEFAULT_MAX_CACHE = 50_000;
+let maxCacheSize = DEFAULT_MAX_CACHE;
+
+/** Test-only: shrink cache cap to exercise eviction behaviour. */
+export function setAisMaxCacheSizeForTests(size: number): void {
+    maxCacheSize = size;
+}
+
+export function resetAisMaxCacheSizeForTests(): void {
+    maxCacheSize = DEFAULT_MAX_CACHE;
+}
+
 const MAX_AGE_MS = 60 * 60 * 1000;   // 1 hour
 const TIMEOUT_MS = 60_000;           // 60s generous handshake window
 const RECONNECT_MS = 5_000;
@@ -43,10 +54,22 @@ export function getCachedVessels(): any[] {
     return Array.from(getState().vesselCache.values());
 }
 
-function capCache(m: Map<number, unknown>): void {
-    if (m.size > MAX_CACHE) {
-        const k = m.keys().next().value;
-        if (k !== undefined) m.delete(k);
+function evictMmsi(s: AisState, mmsi: number): void {
+    s.vesselCache.delete(mmsi);
+    s.typeCache.delete(mmsi);
+}
+
+/** Keep vessel and type entries aligned — never drop one map entry without the other. */
+function capCaches(s: AisState): void {
+    while (s.vesselCache.size > maxCacheSize) {
+        const k = s.vesselCache.keys().next().value;
+        if (k === undefined) break;
+        evictMmsi(s, k);
+    }
+    while (s.typeCache.size > maxCacheSize) {
+        const k = s.typeCache.keys().next().value;
+        if (k === undefined) break;
+        evictMmsi(s, k);
     }
 }
 
@@ -59,7 +82,7 @@ export function ingestAisMessage(msg: any): void {
         if (!sd || typeof sd.UserID !== 'number') return;
         const type = aisShipTypeToCategory(sd.Type);
         s.typeCache.set(sd.UserID, type);
-        capCache(s.typeCache);
+        capCaches(s);
         const v = s.vesselCache.get(sd.UserID);
         if (v) v.type = type;
         return;
@@ -67,9 +90,11 @@ export function ingestAisMessage(msg: any): void {
 
     if (msg?.MessageType !== 'PositionReport') return;
 
-    const rpt = msg.Message.PositionReport;
+    const rpt = msg.Message?.PositionReport;
+    if (!rpt || typeof rpt.UserID !== 'number') return;
+
     const meta = msg.MetaData;
-    const mmsi: number = rpt.UserID;
+    const mmsi = rpt.UserID;
 
     if (Math.abs(rpt.Latitude) > 90 || Math.abs(rpt.Longitude) > 180) return;
 
@@ -83,7 +108,7 @@ export function ingestAisMessage(msg: any): void {
         heading: rpt.Cog === 3600 ? 0 : rpt.Cog,
         timestamp: meta.time_utc,
     });
-    capCache(s.vesselCache);
+    capCaches(s);
 }
 
 export function startAisStream(): void {
